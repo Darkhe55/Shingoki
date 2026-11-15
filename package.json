@@ -1,0 +1,29 @@
+{
+  "name": "shingoki-puzzle",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "信号旗（Shingoki）：画一条经过所有圆的单一闭环，黑圆转弯、白圆直行，圆内数字为两侧到第一次转弯的长度和。",
+  "puzzle": {
+    "port": 5216,
+    "comment": "dev server 端口（vite.config.ts / scripts/dev.mjs / scripts/ui-check.mjs 都读这里，是唯一来源）"
+  },
+  "scripts": {
+    "dev": "vite",
+    "start": "node scripts/dev.mjs",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "gen": "node scripts/gen-puzzles.mjs",
+    "check": "node scripts/check.mjs",
+    "ui-check": "node scripts/ui-check.mjs",
+    "verify": "node scripts/verify-game.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.64.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.6"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true
+  }
+}
