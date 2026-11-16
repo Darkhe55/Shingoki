@@ -112,3 +112,16 @@ scripts/           dev / gen / check / verify / ui-check
 - 自定义题板不强制唯一解，20×20 大盘的「求解」可能超时（会提示），逻辑回放对超大自定义题也会先跑规则再看是否需要回溯；
 - 内置题由生成器生成，线索密度偏高，难度区分主要靠盘面尺寸；
 - 音效依赖浏览器 Web Audio，自动播放策略下需先点一下页面。
+
+## 从图片导入题库（自动识图）
+
+```bash
+node scripts/import-image.mjs month.png                     # 只预览识别结果，不写入
+node scripts/import-image.mjs month.png --append            # 追加到 src/game/puzzles-data.ts
+node scripts/import-image.mjs month.png --append --verify   # 顺带校验唯一解并写入参考解
+```
+
+- 用 Playwright + Edge 无头浏览器读像素：全图连通域区分"格心圆点 / 黑圆 / 白圆"→ 聚类圆点得到网格 → 圆内像素按黑圆取白字、白圆取黑字 → 字体模板自动择优 + 字形簇识别数字。
+- 常用选项：`--name`、`--series`、`--width N --height N`（自动识别网格失败时手动指定）、`--map 0=3,1=2`（人工指定字形簇对应的数字）、`--dry`、`--debug <目录>`、`--max-nodes`、`--verify-timeout`。
+- 限制：题库编码 `code = 颜色×10 + 数字` 只支持 0~9；若题图里有 >9 的圆内数字，默认 `--append` 会拒绝，确认可接受时可加 `--drop-large` 把这些圆按"无数字圆"导入。
+- `--verify` 在子进程里调用项目求解器，超时或崩溃只警告，此时条目不写参考解。
