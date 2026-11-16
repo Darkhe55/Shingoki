@@ -15,15 +15,20 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 
 import { decodePuzzle } from '../src/game/puzzles.ts'
-import { checkSolution, valuesFromState } from '../src/game/rules.ts'
+import { checkSolution, ON, OFF, valuesFromState } from '../src/game/rules.ts'
 import { countSolutions } from '../src/game/solver.ts'
 import { planLogicSolve } from '../src/game/logic.ts'
 import { createEmptyState, deserializeState, serializeState, stateFromSolution } from '../src/game/state.ts'
 import {
+  circleColor,
+  circleNumber,
   decodeCircles,
   decodeSolution,
   encodeCircles,
+  horizontalEdgeIndex,
   layoutFor,
+  makeCircle,
+  verticalEdgeIndex,
 } from '../src/game/types.ts'
 
 const DATA_FILE = path.resolve('src/game/puzzles-data.ts')
@@ -132,6 +137,92 @@ for (const e of entries) {
   console.log(
     `[check] ✓ ${e.id.padEnd(22)} ${e.width}×${e.height} 圆 ${String(circleCount).padStart(2)} 个 · 解唯一 · 逻辑纯推 ${String(plan.frames.length).padStart(4)} 帧 / ${counted.nodes} 节点`,
   )
+}
+
+/* ── 圆编码扩展自检：旧紧凑格式逐字节兼容 + 0..99 两位数字往返 ── */
+{
+  const checks = [
+    [
+      'makeCircle 0..9 保持旧紧凑编码',
+      makeCircle(1, 0) === 10 && makeCircle(1, 9) === 19 && makeCircle(2, 5) === 25,
+    ],
+    [
+      'makeCircle 10..99 使用扩展编码',
+      makeCircle(1, 10) === 110 && makeCircle(2, 14) === 214 && makeCircle(1, 99) === 199 && makeCircle(2, 99) === 299,
+    ],
+    [
+      'circleColor / circleNumber 识别扩展编码',
+      circleColor(114) === 1 && circleNumber(114) === 14 && circleColor(225) === 2 && circleNumber(225) === 25,
+    ],
+    ['旧紧凑 board 编码逐字节稳定', encodeCircles([0, 10, 19, 20, 29]) === '.ajkt'],
+    [
+      '旧紧凑 board 解码不变',
+      JSON.stringify(decodeCircles('.ajkt', 5)) === JSON.stringify([0, 10, 19, 20, 29]),
+    ],
+  ]
+  const wide = [0, makeCircle(1, 10), makeCircle(2, 25), makeCircle(1, 9), makeCircle(2, 14)]
+  const wideBoard = encodeCircles(wide)
+  checks.push(['含 ≥10 数字时切换宽格式（每格 2 字符）', wideBoard.length === wide.length * 2])
+  const wideBack = decodeCircles(wideBoard, wide.length)
+  checks.push([
+    '宽格式 board 编解码往返',
+    !!wideBack && wideBack.every((v, i) => v === wide[i]),
+  ])
+  checks.push([
+    'board 长度不匹配时解码失败（不误判格式）',
+    decodeCircles(wideBoard.slice(1), wide.length) === null,
+  ])
+  for (const [name, ok] of checks) {
+    if (!ok) fail(`圆编码自检失败：${name}`)
+  }
+  if (checks.every(([, ok]) => ok)) {
+    console.log('[check] ✓ 圆编码扩展自检：0..9 旧编码逐字节兼容，10..99 扩展编码往返正常')
+  }
+}
+
+/* ── 两位数字规则/求解自检：2×15 矩形回路，黑圆 15 / 白圆 14 都走扩展编码 ── */
+{
+  const w = 15
+  const h = 2
+  const circles = new Array(w * h).fill(0)
+  const at = (x, y) => y * w + x
+  for (const [x, y] of [
+    [0, 0],
+    [w - 1, 0],
+    [0, h - 1],
+    [w - 1, h - 1],
+  ]) {
+    circles[at(x, y)] = makeCircle(1, 15)
+  }
+  circles[at(7, 0)] = makeCircle(2, 14)
+  circles[at(7, 1)] = makeCircle(2, 14)
+  const puzzle = {
+    id: 'selftest-2x15',
+    name: '两位数字自检',
+    width: w,
+    height: h,
+    difficulty: 'hard',
+    circles,
+  }
+  const layout = layoutFor(puzzle)
+  const values = new Array(layout.count).fill(OFF)
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w - 1; x++) values[horizontalEdgeIndex(w, x, y)] = ON
+  }
+  for (let y = 0; y < h - 1; y++) {
+    values[verticalEdgeIndex(w, h, 0, y)] = ON
+    values[verticalEdgeIndex(w, h, w - 1, y)] = ON
+  }
+  const refCheck = checkSolution(values, puzzle)
+  if (!refCheck.ok || refCheck.badNumber.length) {
+    fail(`两位数字规则自检失败：badNumber=${JSON.stringify(refCheck.badNumber)}`)
+  }
+  const out = countSolutions(puzzle, 2, 400_000, 15_000)
+  const solverOk = out.count === 1 && !!out.first && checkSolution(out.first, puzzle).ok
+  if (!solverOk) fail(`两位数字求解自检失败：count=${out.count} timedOut=${out.timedOut}`)
+  if (refCheck.ok && solverOk) {
+    console.log('[check] ✓ 两位数字自检：黑圆 15 / 白圆 14 校验通过，求解器找到唯一解')
+  }
 }
 
 console.log(`[check] 共 ${entries.length} 题，错误 ${errors}，警告 ${warnings}`)

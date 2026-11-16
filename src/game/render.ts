@@ -167,8 +167,10 @@ export function renderBoard(
     }
     if (n > 0) {
       const cls = color === CIRCLE_BLACK ? 'sk-circle-num black' : 'sk-circle-num white'
+      // 两位数（10..99）字号略小，保证不出圆
+      const fontSize = n >= 10 ? cell * 0.34 : cell * 0.44
       parts.push(
-        `<text class="${cls}" x="${c.x.toFixed(2)}" y="${(c.y + 0.5).toFixed(2)}" style="font-size:${(cell * 0.44).toFixed(2)}px">${n}</text>`,
+        `<text class="${cls}" x="${c.x.toFixed(2)}" y="${(c.y + 0.5).toFixed(2)}" style="font-size:${fontSize.toFixed(2)}px">${n}</text>`,
       )
     }
     if (badCircle.has(cellIdx)) {

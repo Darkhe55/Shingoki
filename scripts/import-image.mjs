@@ -2,7 +2,7 @@
  * 信号旗（Shingoki）题面图片自动导入
  *
  * 用法：
- *   node scripts/import-image.mjs <图片路径> [--name 名称] [--append] [--verify] [--drop-large]
+ *   node scripts/import-image.mjs <图片路径> [--name 名称] [--append] [--verify]
  *                                   [--width 41 --height 41] [--map 0=1,1=3] [--dry]
  *                                   [--max-nodes 400000] [--verify-timeout 120000]
  *
@@ -10,9 +10,13 @@
  *   1. Playwright + Edge 把图片画到 canvas 取像素；
  *   2. 全图连通域：小圆点=格心标记 → 聚类得到 W×H 网格；
  *   3. 大连通域是圆：填充率高=黑圆（白字），环形=白圆（黑字）；
- *   4. 圆内像素做 20×20 归一化，多套字体模板自动择优 + 字形簇识别数字；--map 人工覆盖；
+ *   4. 圆内像素做 20×20 归一化，多套字体模板自动择优 + 字形簇识别数字（0..99，含两位数）；
  *   5. 预览圆点布局；--append 写入 src/game/puzzles-data.ts；
  *   6. --verify 在子进程里用项目求解器检查唯一解（超时/崩溃只警告）。
+ *
+ * 编码：直接复用 src/game/types.ts 的 makeCircle / encodeCircles，
+ *   0..9 仍是旧的 10+n / 20+n 紧凑单字符编码，≥10 时自动切到 100+n / 200+n
+ *   的两位数字扩展编码（board 串相应变为每格 2 字符）。旧题库完全不受影响。
  */
 
 import fs from 'node:fs'
@@ -20,12 +24,16 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { chromium } from 'playwright-core'
+import {
+  encodeCircles,
+  makeCircle,
+  MAX_CIRCLE_NUMBER,
+} from '../src/game/types.ts'
 
 const EDGE_PATH =
   process.env.EDGE_PATH || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
 const NORM = 20
 const CLUSTER_SIM = 0.86
-const BASE36 = '0123456789abcdefghijklmnopqrstuvwxyz'
 
 /** matplotlib/PIL 渲染的题图数字是 DejaVu Sans Bold；本机能找到就优先用。 */
 function findDejaVuBold() {
@@ -70,7 +78,7 @@ const arg = (flag, fallback = null) => {
 const imagePath = argv.find((a) => !a.startsWith('--'))
 if (!imagePath) {
   console.error(
-    '用法：node scripts/import-image.mjs <图片路径> [--name 名称] [--append] [--verify] [--drop-large] [--width N --height N] [--map 0=1,1=3] [--dry]',
+    '用法：node scripts/import-image.mjs <图片路径> [--name 名称] [--append] [--verify] [--width N --height N] [--map 0=1,1=3] [--dry]',
   )
   process.exit(1)
 }
@@ -86,6 +94,9 @@ const series = arg('--series', '导入')
 const append = has('--append')
 const verify = has('--verify')
 const dry = has('--dry')
+if (has('--drop-large')) {
+  console.warn('[import] --drop-large 已废弃：现在支持 0..99 的圆内数字，不会再丢弃 >9 的线索（该参数被忽略）。')
+}
 const debugDir = arg('--debug', '')
 const maxNodesOpt = Number(arg('--max-nodes', '400000')) || 400000
 const verifyTimeout = Number(arg('--verify-timeout', '120000')) || 120000
@@ -554,8 +565,10 @@ const classifyAll = (gl) => {
     const s = bestDigit(gl.m, tpl)
     if (!bestSingle || s.score > bestSingle.score) bestSingle = { label: String(s.digit), score: s.score, margin: s.margin }
   }
-  // 信号旗圆内只有 0~9，识别成两位数说明字形粘连/失真，退回单个数字
-  if (best && best.label.length > 1 && bestSingle && bestSingle.score >= best.score - 0.06) return bestSingle
+  // 单数字的抗锯齿失真偶尔会被误切成两位数：接近方形的字形保守退回单数字；
+  // 明显偏宽（w > 1.15h）的字形才是真正的两位数（10..99），保留切分结果。
+  const clearlyWide = gl.raw && gl.w > gl.h * 1.15
+  if (!clearlyWide && best && best.label.length > 1 && bestSingle && bestSingle.score >= best.score - 0.06) return bestSingle
   return best
 }
 
@@ -654,46 +667,48 @@ if (debugDir) {
   }
 }
 
-// 数字回填到格子（信号旗题库编码只支持 0~9：code = 颜色×10 + 数字）
-const largeNumbers = []
+// 数字回填到格子（0..99：0 = 圆里没有数字）
+// 编码交给 src/game/types.ts 的 makeCircle：0..9 仍是旧的 10+n / 20+n，
+// ≥10 自动切到 100+n / 200+n，不再丢弃 >9 的线索。
 for (let gi = 0; gi < analyzed.glyphs.length; gi++) {
   const gl = analyzed.glyphs[gi]
   const label = clusterDigit[clusterOf[gi]].final
   const num = Number(label)
-  if (!Number.isInteger(num) || num < 0) {
-    console.warn(`[import] 第 ${gl.cell + 1} 格数字异常（识别为 ${label}），按无数字圆处理。`)
-    analyzed.cells[gl.cell].number = 0
-    continue
-  }
-  if (num > 9) {
-    largeNumbers.push({ cell: gl.cell, num })
+  if (!Number.isInteger(num) || num < 0 || num > MAX_CIRCLE_NUMBER) {
+    console.warn(
+      `[import] 第 ${gl.cell + 1} 格数字异常（识别为 ${label}，超出 0..${MAX_CIRCLE_NUMBER}），按无数字圆处理。`,
+    )
     analyzed.cells[gl.cell].number = 0
     continue
   }
   analyzed.cells[gl.cell].number = num
 }
+const largeNumbers = analyzed.cells
+  .map((c, cell) => ({ cell, num: c.number, color: c.color }))
+  .filter((o) => o.color !== 0 && o.num >= 10)
 if (largeNumbers.length) {
-  console.warn(
-    `[import] 有 ${largeNumbers.length} 个圆内数字大于 9（${largeNumbers
-      .map((o) => `${o.num}@(${o.cell % analyzed.w},${(o.cell / analyzed.w) | 0})`)
-      .join(' ')}）。` +
-      '当前信号旗题库编码（code = 颜色×10 + 数字）只支持 0~9，无法无损表示。',
+  console.log(
+    `[import] 圆内数字 ≥10 的圆 ${largeNumbers.length} 个（已按扩展编码保留）：` +
+      largeNumbers
+        .map((o) => `${o.num}@(${o.cell % analyzed.w},${(o.cell / analyzed.w) | 0})`)
+        .join(' '),
   )
-  if (!has('--drop-large')) {
-    console.warn('[import] 预览可用 --drop-large 把这些圆按“无数字圆”导入；否则 --append 会拒绝写入。')
-  }
 }
 
 /* ═══════════════════════════ 预览 + 编码 ═══════════════════════════ */
 const { w, h, cells } = analyzed
 if (debugDir) {
   const bad = cells
-    .map((c, i) => (c.color !== 0 && (c.number <= 0 || c.number > 9) ? `(${i % w},${(i / w) | 0})=${c.number}` : null))
+    .map((c, i) =>
+      c.color !== 0 && (c.number < 0 || c.number > MAX_CIRCLE_NUMBER)
+        ? `(${i % w},${(i / w) | 0})=${c.number}`
+        : null,
+    )
     .filter(Boolean)
   if (bad.length) console.log(`[debug] 数字异常圆位置(x,y)/值：${bad.join(' ')}`)
   for (let gi = 0; gi < analyzed.glyphs.length; gi++) {
     const gl = analyzed.glyphs[gi]
-    if (cells[gl.cell].number > 9 || cells[gl.cell].number <= 0) {
+    if (cells[gl.cell].number < 0) {
       console.log(
         `[debug] 异常字形 cell=${gl.cell} cluster=${clusterOf[gi]}→${clusterDigit[clusterOf[gi]].final} w=${gl.w} h=${gl.h}\n` +
           Array.from({ length: NORM }, (_, j) => gl.m.slice(j * NORM, (j + 1) * NORM).map((v) => (v ? '#' : '.')).join('')).join('\n'),
@@ -701,21 +716,44 @@ if (debugDir) {
     }
   }
 }
-const circles = cells.map((c) => (c.color === 0 ? 0 : c.color * 10 + (Math.max(0, c.number) | 0)))
-const board = circles.map((code) => (code > 0 && code < 36 ? BASE36[code] : '.')).join('')
-console.log('[import] 圆点布局（.=空，黑圆=b..j，白圆=l..t）：')
-for (let y = 0; y < h; y++) console.log('  ' + board.slice(y * w, y * w + w))
+const circles = cells.map((c) => (c.color === 0 ? 0 : makeCircle(c.color, c.number > 0 ? c.number : 0)))
+const board = encodeCircles(circles)
+const wideBoard = board.length === cells.length * 2
+console.log(
+  wideBoard
+    ? '[import] 圆点布局（每格 3 字符：B/W + 两位十进制数字，\'.\' = 空；board 串为扩展宽格式）：'
+    : '[import] 圆点布局（.=空，黑圆=b..j，白圆=l..t）：',
+)
+for (let y = 0; y < h; y++) {
+  if (!wideBoard) {
+    console.log('  ' + board.slice(y * w, y * w + w))
+    continue
+  }
+  const row = cells
+    .slice(y * w, (y + 1) * w)
+    .map((c) =>
+      c.color === 0
+        ? '  .'
+        : (c.color === 1 ? 'B' : 'W') + (c.number > 0 ? String(c.number).padStart(2, ' ') : '  '),
+    )
+    .join('')
+  console.log('  ' + row)
+}
 const blackCount = cells.filter((c) => c.color === 1).length
 const whiteCount = cells.filter((c) => c.color === 2).length
-const droppedCells = new Set(largeNumbers.map((o) => o.cell))
-const noNum = cells.filter((c, i) => c.color !== 0 && c.number === 0 && !droppedCells.has(i)).length
+const noNum = cells.filter((c) => c.color !== 0 && !(c.number > 0)).length
 console.log(
   `[import] 黑圆 ${blackCount} 个 / 白圆 ${whiteCount} 个，其中无数字圆 ${noNum} 个，空格 ${cells.length - blackCount - whiteCount} 个`,
 )
 {
-  const dist = new Array(11).fill(0)
-  for (const c of cells) if (c.color !== 0) dist[Math.max(0, Math.min(10, c.number))]++
-  console.log('[import] 圆内数字分布：' + dist.map((n, d) => `${d}:${n}`).filter((s) => !s.endsWith(':0')).join(' '))
+  const dist = new Map()
+  for (const c of cells) {
+    if (c.color === 0) continue
+    const n = c.number > 0 ? c.number : 0
+    dist.set(n, (dist.get(n) || 0) + 1)
+  }
+  const parts = [...dist.entries()].sort((a, b) => a[0] - b[0]).map(([n, count]) => `${n}×${count}`)
+  console.log('[import] 圆内数字分布（数字×个数）：' + parts.join(' '))
 }
 if (blackCount === 0 && whiteCount === 0) {
   console.error('[import] 没有识别到任何圆：圆检测失败，可用 --debug 查看覆盖图。')
@@ -809,12 +847,6 @@ const id = arg('--id', `shingoki-import-${Date.now().toString(36)}`)
 if (!append) {
   console.log('[import] 预览模式（未写入）。加 --append 写入 src/game/puzzles-data.ts。')
   process.exit(0)
-}
-if (largeNumbers.length && !has('--drop-large')) {
-  console.error(
-    '[import] 拒绝写入：题面含题库编码无法表示的 >9 数字。确认可接受时加 --drop-large（这些圆按无数字圆导入）。',
-  )
-  process.exit(1)
 }
 const dataFile = path.resolve('src/game/puzzles-data.ts')
 if (!fs.existsSync(dataFile)) {

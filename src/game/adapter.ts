@@ -37,10 +37,14 @@ import { statusBits, validate } from './validate'
 import {
   asShingokiPuzzle,
   circleColor,
+  circleNumber,
   CIRCLE_BLACK,
   CIRCLE_WHITE,
+  decodeCircles,
   encodeCircles,
+  isCircleCode,
   layoutFor,
+  makeCircle,
   MAX_CUSTOM_SIZE,
   type ShingokiPuzzle,
 } from './types'
@@ -64,16 +68,16 @@ const meta = {
 
 const PALETTE: CustomPaletteItem[] = [
   { value: null, label: '空', cls: 'brush-empty', title: '清除（也可右键）' },
-  { value: 10, label: '●', cls: 'brush-black', title: '黑圆（无数字）' },
+  { value: makeCircle(CIRCLE_BLACK, 0), label: '●', cls: 'brush-black', title: '黑圆（无数字）' },
   ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({
-    value: 10 + n,
+    value: makeCircle(CIRCLE_BLACK, n),
     label: String(n),
     cls: 'brush-black',
     title: `黑圆 ${n}（必须转弯，两臂长之和 = ${n}）`,
   })),
-  { value: 20, label: '○', cls: 'brush-white', title: '白圆（无数字）' },
+  { value: makeCircle(CIRCLE_WHITE, 0), label: '○', cls: 'brush-white', title: '白圆（无数字）' },
   ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({
-    value: 20 + n,
+    value: makeCircle(CIRCLE_WHITE, n),
     label: String(n),
     cls: 'brush-white',
     title: `白圆 ${n}（必须直行，两侧到转弯之和 = ${n}）`,
@@ -89,11 +93,11 @@ const custom: CustomSupport = {
     const color = typeof current === 'number' && circleColor(current) === CIRCLE_WHITE
       ? CIRCLE_WHITE
       : CIRCLE_BLACK
-    return color * 10 + digit
+    return makeCircle(color, digit)
   },
   cellLabel: (v) => {
     if (v == null) return ''
-    const n = v % 10
+    const n = circleNumber(v)
     return n === 0 ? '' : String(n)
   },
   cellClass: (v) => {
@@ -113,7 +117,7 @@ const custom: CustomSupport = {
     const circles = new Array<number>(w * h).fill(0)
     for (let i = 0; i < circles.length && i < grid.length; i++) {
       const v = grid[i]
-      circles[i] = typeof v === 'number' && v >= 10 && v < 30 ? v : 0
+      circles[i] = typeof v === 'number' && isCircleCode(v) ? v : 0
     }
     return {
       id: existingId ?? `${meta.customIdPrefix}${w}x${h}-${Date.now()}`,
@@ -134,16 +138,8 @@ const custom: CustomSupport = {
     const board = typeof record.board === 'string' ? record.board : ''
     if (width < 1 || height < 1) return null
     if (width > MAX_CUSTOM_SIZE || height > MAX_CUSTOM_SIZE) return null
-    const circles = new Array<number>(width * height).fill(0)
-    if (board.length !== circles.length) return null
-    const BASE = '0123456789abcdefghijklmnopqrstuvwxyz'
-    for (let i = 0; i < circles.length; i++) {
-      const ch = board[i]!
-      if (ch === '.') continue
-      const v = BASE.indexOf(ch.toLowerCase())
-      if (v < 10 || v > 29) return null
-      circles[i] = v
-    }
+    const circles = decodeCircles(board, width * height)
+    if (!circles) return null
     return {
       id: typeof record.id === 'string' ? record.id : '',
       name: typeof record.name === 'string' ? record.name : `自定义 · ${width}×${height}`,
