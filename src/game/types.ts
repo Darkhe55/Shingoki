@@ -26,8 +26,8 @@
 
 import type { GameState, Puzzle } from '../core/types'
 
-/** 自定义题板最大边长 */
-export const MAX_CUSTOM_SIZE = 20
+/** 自定义题板最大边长（识图导入的大题可到 41×41，自定义题板放宽到 40） */
+export const MAX_CUSTOM_SIZE = 40
 
 export const CIRCLE_NONE = 0
 export const CIRCLE_BLACK = 1
