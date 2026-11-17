@@ -39,7 +39,7 @@ export function cloneState(state: GameState): ShingokiState {
 /** 左键循环：未定 → 画线 → 标叉 → 未定 */
 export function cycleValue(state: GameState, target: HitTarget): number {
   const cur = asShingokiState(state).edges[target.index] ?? 0
-  return cur === 0 ? 1 : cur === 1 ? 2 : 0
+  return cur === 1 ? 0 : 1
 }
 
 /** 右键：直接标叉；已是叉则清除 */
