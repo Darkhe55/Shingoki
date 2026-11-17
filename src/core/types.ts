@@ -47,6 +47,8 @@ export interface ValidationResult {
 export interface PlaybackFrame {
   /** 规则编号或 id（显示在状态栏） */
   rule: number | string
+  /** 规则名（可选；状态栏显示「规则3 数字两臂 · …」） */
+  ruleName?: string
   /** 人类可读的推理说明 */
   label: string
   /** 这一帧落下的子 */

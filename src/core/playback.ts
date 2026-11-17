@@ -137,7 +137,7 @@ export class LogicPlayer {
 
       this.frame = i + 1
       this.hooks.setStatus(
-        `回放 [${this.frame}/${this.total}] 规则${frame.rule} · ${frame.label}`,
+        `回放 [${this.frame}/${this.total}] 规则${frame.rule}${frame.ruleName ? ` ${frame.ruleName}` : ''} · ${frame.label}`,
         'solving',
       )
 
